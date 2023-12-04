@@ -19,3 +19,4 @@ test/
 woodscape_split/
 .DS_Store
 ._.DS_Store
+tmp.py
