@@ -16,9 +16,12 @@ import numpy as np
 from datetime import datetime
 
 import wandb
+import json
+from PIL import Image
+
 from evaluate import evaluate
 from unet import UNet, UNet3, UNet_alpha
-from utils.data_loading import BasicDataset, CarvanaDataset
+from utils.data_loading import BasicDataset, CarvanaDataset, TongjiParkingDataset
 from utils.dice_score import dice_loss
 
 from fcn import FCN_resnet50
@@ -52,19 +55,32 @@ def train_model(
         weight_decay: float = 1e-8,
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
+        use_intensity: int = 0,
+        filter_size: int = 1
 ):
     # 1. Create dataset
-    dir_img = os.path.join(data_path,"images")
+    if use_intensity:
+        dir_img = os.path.join(data_path,"images_rgbi")
+    else:
+        dir_img = os.path.join(data_path,"images")
     dir_mask = os.path.join(data_path,"labels")
+    train_image_dir = os.path.join(dir_img, "train")
+    train_mask_dir = os.path.join(dir_mask, "train")
+    val_image_dir = os.path.join(dir_img, "val")
+    val_mask_dir = os.path.join(dir_mask, "val")
+
     # try:
     #     dataset = CarvanaDataset(dir_img, dir_mask, img_scale)
     # except (AssertionError, RuntimeError, IndexError):
-    dataset = BasicDataset(dir_img, dir_mask, img_scale)
-
+    # dataset = BasicDataset(dir_img, dir_mask, img_scale)
+    train_set = TongjiParkingDataset(train_image_dir, train_mask_dir, img_scale, filter_size, use_intensity)
+    val_set = TongjiParkingDataset(val_image_dir, val_mask_dir, img_scale, filter_size, use_intensity)
     # 2. Split into train / validation partitions
-    n_val = int(len(dataset) * val_percent)
-    n_train = len(dataset) - n_val
-    train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
+    # n_val = int(len(dataset) * val_percent)
+    # n_train = len(dataset) - n_val
+    # train_set, val_set = random_split(dataset, [n_train, n_val], generator=torch.Generator().manual_seed(0))
+    n_train = len(train_set)
+    n_val = len(val_set)
 
     # 3. Create data loaders
     # loader_args = dict(batch_size=batch_size, num_workers=os.cpu_count(), pin_memory=True)
@@ -76,7 +92,7 @@ def train_model(
 
     # (Initialize logging)
     if use_wandb:
-        experiment = wandb.init(project='U-Net', resume='allow', anonymous='must', entity='tj_cvrsg')
+        experiment = wandb.init(project='RGBI-semantic-segmentation', resume='allow', anonymous='must', entity='tj_cvrsg')
         experiment.config.update(
             dict(epochs=epochs, alpha = alpha, batch_size=batch_size, learning_rate=learning_rate,
                 val_percent=val_percent, save_checkpoint=save_checkpoint, img_scale=img_scale, amp=amp)
@@ -93,12 +109,13 @@ def train_model(
         Device:          {device.type}
         Images scaling:  {img_scale}
         Mixed Precision: {amp}
+        Use Intensity: {use_intensity}
     ''')
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
     optimizer = optim.RMSprop(model.parameters(),
                               lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=5)  # goal: maximize Dice score
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=10)  # goal: maximize Dice score
     grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
     criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss()
     global_step = 0
@@ -150,7 +167,7 @@ def train_model(
                 pbar.set_postfix(**{'loss (batch)': loss.item()})
 
                 # Evaluation round
-                division_step = (n_train // (5 * batch_size))
+                division_step = (n_train // (1 * batch_size))
                 if division_step > 0:
                     if global_step % division_step == 0:
                         histograms = {}
@@ -167,16 +184,30 @@ def train_model(
 
                         logging.info('Validation Dice score: {}'.format(val_score))
                         if use_wandb:
+                            true_mask_rgb = mask_coloring(true_masks[0].float().cpu())
+                            pred_mask_rgb = mask_coloring(masks_pred.argmax(dim=1)[0].float().cpu())
+                            if use_intensity == 1:
+                                # wandb_images = images[0].cpu()[0:3,:,:]
+                                wandb_images = images[0].cpu()
+                                # wandb_intensity = images[0].cpu()[3,:,:]
+                                # wandb_intensity[wandb_intensity==0] = 1
+                                wandb_images[3,:,:][wandb_images[3,:,:]==0] = 1
+                            elif use_intensity == 0:
+                                wandb_images = images[0].cpu()
+                            elif use_intensity == 2:
+                                wandb_images = images[0].cpu()
                             try:
                                 experiment.log({
                                     'learning rate': optimizer.param_groups[0]['lr'],
                                     'validation Dice': val_score,
                                     'val miou': val_miou,
                                     # 'train Dice': train_score,
-                                    'images': wandb.Image(images[0].cpu()),
+                                    'images': wandb.Image(wandb_images),
                                     'masks': {
-                                        'true': wandb.Image(true_masks[0].float().cpu()),
-                                        'pred': wandb.Image(masks_pred.argmax(dim=1)[0].float().cpu()),
+                                        # 'true': wandb.Image(true_masks[0].float().cpu()),
+                                        # 'pred': wandb.Image(masks_pred.argmax(dim=1)[0].float().cpu()),
+                                        'true': wandb.Image(true_mask_rgb),
+                                        'pred': wandb.Image(pred_mask_rgb),
                                     },
                                     'step': global_step,
                                     'epoch': epoch,
@@ -188,12 +219,26 @@ def train_model(
         if save_checkpoint and epoch%10==0:
             Path(dir_checkpoint).mkdir(parents=True, exist_ok=True)
             state_dict = model.state_dict()
-            state_dict['mask_values'] = dataset.mask_values
+            # state_dict['mask_values'] = dataset.mask_values
             torch.save(state_dict, os.path.join(dir_checkpoint, 'checkpoint_epoch{}.pth'.format(epoch)))
             logging.info(f'Checkpoint {epoch} saved!')
         if epoch==epochs:
             print('classes iou:\n')
             print(cls_ious)
+            
+def mask_coloring(mask):
+    label_color_file = 'data/tongji_parking_rgbi/label_color.json'
+    mask_size = mask.shape
+    with open(label_color_file, 'r') as file:
+        category_colors = json.load(file)
+        category_colors = {int(k): tuple(v) for k, v in category_colors.items()}
+    color_mask = np.zeros((mask_size[0], mask_size[1], 3), dtype=np.uint8)
+    # color_mask = torch.zeros((mask_size[0], mask_size[1], 3), dtype=torch.uint8)
+    for value, color in category_colors.items():
+        color_mask[mask == value] = color
+    color_mask_image = Image.fromarray(color_mask)
+    
+    return color_mask_image
 
 def get_args():
     parser = argparse.ArgumentParser(description='Train the UNet on images and target masks')
@@ -204,7 +249,7 @@ def get_args():
                         help='Learning rate', dest='lr')
     parser.add_argument('--load', '-f', type=str, default=False, help='Load model from a .pth file')
     parser.add_argument('--scale', '-s', type=float, default=0.5, help='Downscaling factor of the images')
-    parser.add_argument('--validation', '-v', dest='val', type=float, default=10.0,
+    parser.add_argument('--validation', '-v', dest='val', type=float, default=20.0,
                         help='Percent of the data that is used as validation (0-100)')
     parser.add_argument('--amp', action='store_true', default=False, help='Use mixed precision')
     parser.add_argument('--bilinear', action='store_true', default=False, help='Use bilinear upsampling')
@@ -213,8 +258,9 @@ def get_args():
     parser.add_argument('--model', type=str ,default='UNet_alpha')
     parser.add_argument('--alpha', type=float ,default=1)
     parser.add_argument('--use-wandb', type=int, default=1)
+    parser.add_argument('--use-intensity', type=int, default=1)
+    parser.add_argument('--intensity-upsample-filter-size', type=int, default=1)
     
-
     return parser.parse_args()
 
 
@@ -229,7 +275,7 @@ if __name__ == '__main__':
     current_date = datetime.now().date()
     
     if args.model == 'UNet_alpha':
-        dir_checkpoint = os.path.join('./checkpoints', args.model + str(args.alpha) + '_' + dataset + str(current_date))
+        dir_checkpoint = os.path.join('./checkpoints', args.model + str(args.alpha) + '_' + dataset + f'_useintensity{args.use_intensity}_' + f'fs{args.intensity_upsample_filter_size}_' + str(current_date))
     else:    
         dir_checkpoint = os.path.join('./checkpoints', args.model + '_' + dataset + str(current_date))
     # Change here to adapt to your data
@@ -240,7 +286,12 @@ if __name__ == '__main__':
     elif args.model == 'UNet3':
         model = UNet3(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
     elif args.model == 'UNet_alpha':
-        model = UNet_alpha(n_channels=3, n_classes=args.classes, bilinear=args.bilinear, alpha=args.alpha)
+        if args.use_intensity == 1:
+            model = UNet_alpha(n_channels=4, n_classes=args.classes, bilinear=args.bilinear, alpha=args.alpha)
+        elif args.use_intensity == 2:
+            model = UNet_alpha(n_channels=1, n_classes=args.classes, bilinear=args.bilinear, alpha=args.alpha)
+        else:
+            model = UNet_alpha(n_channels=3, n_classes=args.classes, bilinear=args.bilinear, alpha=args.alpha)
     elif args.model == 'fcn':    
         model = FCN_resnet50(n_channels=3, n_classes=args.classes)
         
@@ -270,7 +321,9 @@ if __name__ == '__main__':
             device=device,
             img_scale=args.scale,
             val_percent=args.val / 100,
-            amp=args.amp
+            amp=args.amp,
+            use_intensity = args.use_intensity,
+            filter_size = args.intensity_upsample_filter_size
         )
     except torch.cuda.OutOfMemoryError:
         logging.error('Detected OutOfMemoryError! '
