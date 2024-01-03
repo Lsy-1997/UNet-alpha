@@ -100,7 +100,7 @@ class BasicDataset(Dataset):
         # use fixed input size
         # pil_img = pil_img.resize((1024, 1024))
         img = np.asarray(pil_img)
-        img = cv2.resize(img, (1024, 1024))
+        # img = cv2.resize(img, (1024, 1024))
 
         # w, h = pil_img.size
         # newW, newH = int(scale * w), int(scale * h)
