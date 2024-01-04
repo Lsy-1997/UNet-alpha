@@ -14,7 +14,7 @@ from tqdm import tqdm
 import os
 import cv2
 from scipy.ndimage import maximum_filter
-
+from utils.augmentations import Albumentations
 
 def load_image(filename):
     ext = splitext(filename)[1]
@@ -100,7 +100,7 @@ class BasicDataset(Dataset):
         # use fixed input size
         # pil_img = pil_img.resize((1024, 1024))
         img = np.asarray(pil_img)
-        # img = cv2.resize(img, (1024, 1024))
+        img = cv2.resize(img, (1024, 1024))
 
         # w, h = pil_img.size
         # newW, newH = int(scale * w), int(scale * h)
@@ -160,6 +160,7 @@ class TongjiParkingDataset(BasicDataset):
         self.mask_dir = Path(mask_dir)
         self.filter_size = filter_size
         self.use_intensity = use_intensity
+        self.augmentation = Albumentations()
             
         assert 0 < scale <= 1, 'Scale must be between 0 and 1'
         self.scale = scale
@@ -193,9 +194,8 @@ class TongjiParkingDataset(BasicDataset):
                 for item in self.mask_values:
                     file.write(str(item) + '\n')
                     
-    def preprocess(self, mask_values, pil_img, scale, is_mask, square_pad=False):
-        # use fixed input size
-        img = np.asarray(pil_img)
+    def preprocess(self, mask_values, img, scale, is_mask, square_pad=False):
+
         img = cv2.resize(img, (1024, 1024))
         
         w, h = img.shape[0:2]
@@ -244,13 +244,29 @@ class TongjiParkingDataset(BasicDataset):
         assert len(mask_file) == 1, f'Either no mask or multiple masks found for the ID {name}: {mask_file}'
         mask = load_image(mask_file[0])
         img = load_image(img_file[0])
+        
+        img = np.asarray(img)
+        mask = np.asarray(mask)
+        
+        if self.use_intensity == 1:
+            img_rgb = img[:,:,0:3]
+            img_intensity = img[:,:,3]
+            img_intensity = img_intensity[..., None]
 
-        assert img.size == mask.size, \
-            f'Image and mask {name} should be the same size, but are {img.size} and {mask.size}'
+            img_rgb, mask = self.augmentation(img_rgb, mask)
+            img = np.concatenate((img_rgb, img_intensity), axis=2)
+
+        elif self.use_intensity == 0:
+            img, mask = self.augmentation(img, mask)
+            
+
+        assert img.shape[0:1] == mask.shape[0:1], \
+            f'Image and mask {name} should be the same size, but are {img.shape} and {mask.shape}'
 
         img = self.preprocess(self.mask_values, img, self.scale, is_mask=False)
         mask = self.preprocess(self.mask_values, mask, self.scale, is_mask=True)
 
+        
         return {
             'image': torch.as_tensor(img.copy()).float().contiguous(),
             'mask': torch.as_tensor(mask.copy()).long().contiguous()
