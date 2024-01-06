@@ -30,4 +30,5 @@ export PYTHONWARNINGS='ignore:semaphore_tracker:UserWarning'
 # python train.py --epochs 100 --batch-size 1 --classes 6 --data-path 'data/tongji_parking_rgbi_slice_splitted_truergbi' --model UNet_alpha --alpha 0.5 --scale 1.0 --use-intensity 0
 # python train.py --epochs 100 --batch-size 1 --classes 6 --data-path 'data/tongji_parking_rgbi_slice_splitted_truergbi' --model UNet_alpha --alpha 0.5 --scale 1.0 --use-intensity 1
 # python train.py --epochs 100 --batch-size 1 --classes 6 --data-path 'data/tongji_parking_rgbi_slice_splitted_truergbi' --model UNet_alpha --alpha 0.5 --scale 1.0 --use-intensity 1 --intensity-upsample-filter-size 15
-python train.py --epochs 200 --batch-size 1 --classes 6 --data-path 'data/tongji_parking_rgbi_slice_splitted_truergbi' --model UNet_alpha --alpha 1.0 --scale 1.0 --use-intensity 1 --intensity-upsample-filter-size 15
+# python train.py --epochs 200 --batch-size 1 --classes 6 --data-path 'data/tongji_parking_rgbi_slice_splitted_truergbi' --model UNet_alpha --alpha 1.0 --scale 1.0 --use-intensity 1 --intensity-upsample-filter-size 15
+python train.py --epochs 200 --batch-size 1 --classes 6 --data-path 'data/tongji_parking_rgbi_slice_splitted_truergbi' --model SwinTransformer  --scale 0.5 --use-intensity 0

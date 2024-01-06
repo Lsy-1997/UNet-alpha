@@ -8,6 +8,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms as transforms
 import torchvision.transforms.functional as TF
+import torchvision.models as models
+
 from pathlib import Path
 from torch import optim
 from torch.utils.data import DataLoader, random_split
@@ -23,6 +25,8 @@ from evaluate import evaluate
 from unet import UNet, UNet3, UNet_alpha
 from utils.data_loading import BasicDataset, CarvanaDataset, TongjiParkingDataset
 from utils.dice_score import dice_loss
+
+from swin_transformer import SwinTransformer, swin_t_upernet
 
 from fcn import FCN_resnet50
 # from models.ffnet_S_mobile import segmentation_ffnet86S_dBBB_mobile_lsy
@@ -59,10 +63,9 @@ def train_model(
         filter_size: int = 1
 ):
     # 1. Create dataset
-    if use_intensity:
-        dir_img = os.path.join(data_path,"images_rgbi")
-    else:
-        dir_img = os.path.join(data_path,"images")
+    dir_img = os.path.join(data_path,"images_rgbi")
+    # else:
+    #     dir_img = os.path.join(data_path,"images")
     dir_mask = os.path.join(data_path,"labels")
     train_image_dir = os.path.join(dir_img, "train")
     train_mask_dir = os.path.join(dir_mask, "train")
@@ -113,9 +116,10 @@ def train_model(
     ''')
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
-    optimizer = optim.RMSprop(model.parameters(),
-                              lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=10)  # goal: maximize Dice score
+    optimizer = optim.RMSprop(model.parameters(), lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
+    # optimizer = optim.Adam(model.parameters(), lr=0.00006)
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=20)  # goal: maximize Dice score
+    scheduler = optim.lr_scheduler.LinearLR(optimizer, learning_rate)  # goal: maximize Dice score
     grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
     criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss()
     global_step = 0
@@ -175,8 +179,9 @@ def train_model(
                             tag = tag.replace('/', '.')
                             if not torch.isinf(value).any():
                                 histograms['Weights/' + tag] = wandb.Histogram(value.data.cpu())
-                            if not torch.isinf(value.grad).any():
-                                histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
+                            if value.grad != None:
+                                if not torch.isinf(value.grad).any():
+                                    histograms['Gradients/' + tag] = wandb.Histogram(value.grad.data.cpu())
 
                         # train_score, train_miou = evaluate(model, train_loader, device, amp)
                         val_score, val_miou, cls_ious = evaluate(model, val_loader, device, amp)
@@ -281,25 +286,45 @@ if __name__ == '__main__':
     # Change here to adapt to your data
     # n_channels=3 for RGB images
     # n_classes is the number of probabilities you want to get per pixel
+    if args.use_intensity == 0:
+        channels = 3
+    elif args.use_intensity == 1:
+        channels = 4
+    elif args.use_intensity == 2:
+        channels = 1
+    
+    # model = models.swin_v2_t(weights=models.Swin_V2_T_Weights)
+        
     if args.model == 'UNet':
-        model = UNet(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
+        model = UNet(n_channels=channels, n_classes=args.classes, bilinear=args.bilinear)
     elif args.model == 'UNet3':
-        model = UNet3(n_channels=3, n_classes=args.classes, bilinear=args.bilinear)
+        model = UNet3(n_channels=channels, n_classes=args.classes, bilinear=args.bilinear)
     elif args.model == 'UNet_alpha':
         if args.use_intensity == 1:
-            model = UNet_alpha(n_channels=4, n_classes=args.classes, bilinear=args.bilinear, alpha=args.alpha)
-        elif args.use_intensity == 2:
-            model = UNet_alpha(n_channels=1, n_classes=args.classes, bilinear=args.bilinear, alpha=args.alpha)
-        else:
-            model = UNet_alpha(n_channels=3, n_classes=args.classes, bilinear=args.bilinear, alpha=args.alpha)
+            model = UNet_alpha(n_channels=channels, n_classes=args.classes, bilinear=args.bilinear, alpha=args.alpha)
     elif args.model == 'fcn':    
-        model = FCN_resnet50(n_channels=3, n_classes=args.classes)
+        model = FCN_resnet50(n_channels=channels, n_classes=args.classes)
+    elif args.model == 'SwinTransformer':
+        # 预训练
+        # swin_v2_t = models.swin_v2_t(weights=models.Swin_V2_T_Weights)
+        model = swin_t_upernet(
+                                    hidden_dim=96,
+                                    layers=(2, 2, 6, 2),
+                                    heads=(3, 6, 12, 24),
+                                    channels=channels,
+                                    num_classes=args.classes,
+                                    head_dim=32,
+                                    window_size=8,
+                                    downscaling_factors=(4, 2, 2, 2),
+                                    relative_pos_embedding=True,
+                                    size=[512, 512]
+                                )
         
     model = model.to(memory_format=torch.channels_last)
 
     logging.info(f'Network:\n'
-                 f'\t{model.n_channels} input channels\n'
-                 f'\t{model.n_classes} output channels (classes)\n')
+                 f'\t{channels} input channels\n'
+                 f'\t{args.classes} output channels (classes)\n')
 
     if args.load:
         state_dict = torch.load(args.load, map_location=device)

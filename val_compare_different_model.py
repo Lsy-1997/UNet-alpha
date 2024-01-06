@@ -18,26 +18,7 @@ from scipy.ndimage import maximum_filter
 
 tongji_parking_rgbi = [[0, 0, 0],[46,120,193],[100,238,87],[200,213,23],[11,116,231],[42,7,209]]
 def plot_mask(img, masks, colors=None, alpha=0.5) -> np.ndarray:
-    """Visualize segmentation mask.
 
-    Parameters
-    ----------
-    img: numpy.ndarray
-        Image with shape `(H, W, 3)`.
-    masks: numpy.ndarray
-        Binary images with shape `(N, H, W)`.
-    colors: numpy.ndarray
-        corlor for mask, shape `(N, 3)`.
-        if None, generate random color for mask
-    alpha: float, optional, default 0.5
-        Transparency of plotted mask
-
-    Returns
-    -------
-    numpy.ndarray
-        The image plotted with segmentation masks, shape `(H, W, 3)`
-
-    """
     masks = np.array(masks)
     img = np.array(img)
     colors = np.array(colors)
@@ -173,12 +154,19 @@ def mask_to_image(mask: np.ndarray, mask_values):
 
     return out
 
+def brightness_adjust(img, factor):
+    
+    brightened_image = cv2.add(img, np.array([factor]))
+    
+    return brightened_image
+
 
 if __name__ == '__main__':
     args = get_args()
     logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
-    in_dir = args.input
+    # in_dir = args.input
+    in_dir = "/home/cvrsg/lsy/Parking_line_detection/UNet-alpha/data/tongji_parking_rgbi_slice_splitted_truergbi/images_rgbi/val"
     if os.path.isdir(in_dir):
         in_files = os.listdir(in_dir)
         in_files_path = [os.path.join(in_dir, file) for file in in_files]
@@ -187,7 +175,9 @@ if __name__ == '__main__':
     
     n_classes = args.classes
         
-    out_dir = args.output
+    # out_dir = args.output
+    factor = 0.8  # 增加或减少的亮度值
+    out_dir = f"/home/cvrsg/lsy/Parking_line_detection/UNet-alpha/test/UNet_a0.5_RGBI_compare_brightness_adjust/{factor}"
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
         
@@ -196,10 +186,10 @@ if __name__ == '__main__':
     labels_dir = '/home/cvrsg/lsy/Parking_line_detection/UNet-alpha/data/tongji_parking_rgbi_slice_splitted_truergbi/labels/val'
     labels_path = get_output_filenames(labels_dir, in_files)
     
-    model_path1 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity0_fs1_2024-01-02/checkpoint_epoch100.pth'
-    model_path2 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs1_2024-01-02/checkpoint_epoch100.pth'
-    model_path3 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs5_2024-01-02/checkpoint_epoch100.pth'
-    model_path4 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs15_2024-01-02/checkpoint_epoch100.pth'
+    model_path1 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity0_fs1_2024-01-04/checkpoint_epoch200.pth'
+    model_path2 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs1_2024-01-04/checkpoint_epoch200.pth'
+    model_path3 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs5_2024-01-04/checkpoint_epoch200.pth'
+    model_path4 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs15_2024-01-04/checkpoint_epoch200.pth'
 
     net1 = UNet_alpha(n_channels=3, n_classes=n_classes, bilinear=False, alpha=0.5)
     net2 = UNet_alpha(n_channels=4, n_classes=n_classes, bilinear=False, alpha=0.5)
@@ -231,6 +221,8 @@ if __name__ == '__main__':
         label = Image.open(labels_path[i])
         
         img_np = np.asarray(img)
+        
+        
         label_np = np.asarray(label)
         img_np = cv2.resize(img_np, (1024, 1024))
         label_np = cv2.resize(label_np, (1024, 1024))
@@ -238,6 +230,14 @@ if __name__ == '__main__':
         img_rgb = img_np[:,:,0:3]
         img_intensity = img_np[:,:,3]
         img_intensity = img_intensity[..., None]
+        
+        # factor = 50  # 增加或减少的亮度值
+        factor_array = np.full_like(img_rgb, factor, dtype=np.float32)
+        img_rgb = np.array(img_rgb, dtype=np.float32)
+        # img_rgb = cv2.add(img_rgb, factor_array)
+        img_rgb = cv2.multiply(img_rgb, factor_array)
+        img_rgb = np.array(img_rgb, dtype=np.uint8)
+        # img_rgb = cv2.subtract(img_rgb, factor_array)
         
         img_rgbi = np.concatenate((img_rgb, img_intensity),axis=2)
         
@@ -270,7 +270,7 @@ if __name__ == '__main__':
             # drawed_mask3 = draw_mask(mask=mask3, palette=tongji_parking_rgbi)
             # drawed_mask4 = draw_mask(mask=mask4, palette=tongji_parking_rgbi)
             
-            total_width = result_overlap1.width + result_overlap2.width + result_overlap3.width + result_overlap4.width + groundtruth_overlap.width
+            total_width = img_rgb.width + result_overlap1.width + result_overlap2.width + result_overlap3.width + result_overlap4.width + groundtruth_overlap.width
             max_height = max(result_overlap1.height, result_overlap2.height, result_overlap3.height, result_overlap4.height, groundtruth_overlap.height)
 
             # 创建一个新图像
@@ -278,7 +278,7 @@ if __name__ == '__main__':
 
             # 水平拼接图像
             x_offset = 0
-            for im in [result_overlap1, result_overlap2, result_overlap3, result_overlap4, groundtruth_overlap]:
+            for im in [img_rgb, result_overlap1, result_overlap2, result_overlap3, result_overlap4, groundtruth_overlap]:
                 new_im.paste(im, (x_offset, 0))
                 x_offset += im.width
 

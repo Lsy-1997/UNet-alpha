@@ -196,7 +196,10 @@ class TongjiParkingDataset(BasicDataset):
                     
     def preprocess(self, mask_values, img, scale, is_mask, square_pad=False):
 
-        img = cv2.resize(img, (1024, 1024))
+        if not is_mask:
+            img = cv2.resize(img, (1024, 1024))
+        else:
+            img = cv2.resize(img, (1024, 1024), interpolation=cv2.INTER_NEAREST)
         
         w, h = img.shape[0:2]
         newW, newH = int(scale * w), int(scale * h)
@@ -257,6 +260,7 @@ class TongjiParkingDataset(BasicDataset):
             img = np.concatenate((img_rgb, img_intensity), axis=2)
 
         elif self.use_intensity == 0:
+            img = img_rgb = img[:,:,0:3]
             img, mask = self.augmentation(img, mask)
             
 
