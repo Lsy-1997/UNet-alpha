@@ -26,7 +26,7 @@ from unet import UNet, UNet3, UNet_alpha
 from utils.data_loading import BasicDataset, CarvanaDataset, TongjiParkingDataset
 from utils.dice_score import dice_loss
 
-from swin_transformer import SwinTransformer, swin_t_upernet, swin_t_upernet_pretrained
+from swin_transformer import SwinTransformer, swin_t_upernet, swin_t_upernet_pretrained, swin_t_upernet_pretrained_rgbi
 
 from fcn import FCN_resnet50
 # from models.ffnet_S_mobile import segmentation_ffnet86S_dBBB_mobile_lsy
@@ -60,7 +60,8 @@ def train_model(
         momentum: float = 0.999,
         gradient_clipping: float = 1.0,
         use_intensity: int = 0,
-        filter_size: int = 1
+        filter_size: int = 1,
+        use_diceloss: int = 1
 ):
     # 1. Create dataset
     dir_img = os.path.join(data_path,"images_rgbi")
@@ -113,6 +114,7 @@ def train_model(
         Images scaling:  {img_scale}
         Mixed Precision: {amp}
         Use Intensity: {use_intensity}
+        Use Diceloss: {use_diceloss}
     ''')
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
@@ -149,11 +151,12 @@ def train_model(
                         loss += dice_loss(F.sigmoid(masks_pred.squeeze(1)), true_masks.float(), multiclass=False)
                     else:
                         loss = criterion(masks_pred, true_masks)
-                        loss += dice_loss(
-                            F.softmax(masks_pred, dim=1).float(),
-                            F.one_hot(true_masks, model.n_classes).permute(0, 3, 1, 2).float(),
-                            multiclass=True
-                        )
+                        if use_diceloss==1:
+                            loss += dice_loss(
+                                F.softmax(masks_pred, dim=1).float(),
+                                F.one_hot(true_masks, model.n_classes).permute(0, 3, 1, 2).float(),
+                                multiclass=True
+                            )
 
                 optimizer.zero_grad(set_to_none=True)
                 # grad_scaler.scale(loss).backward()
@@ -269,6 +272,7 @@ def get_args():
     parser.add_argument('--use-wandb', type=int, default=1)
     parser.add_argument('--use-intensity', type=int, default=1)
     parser.add_argument('--intensity-upsample-filter-size', type=int, default=1)
+    parser.add_argument('--use-diceloss', type=int, default=1)
     
     return parser.parse_args()
 
@@ -325,6 +329,8 @@ if __name__ == '__main__':
                                 )
     elif args.model == 'SwinTransformer_pretrained':
         model = swin_t_upernet_pretrained(num_classes=args.classes)
+    elif args.model == 'swin_t_pretrain_rgbi':
+        model = swin_t_upernet_pretrained_rgbi(num_classes=args.classes)
     elif args.model == 'resnet':
         model = models.resnet50(models.ResNet50_Weights)
         
@@ -357,7 +363,8 @@ if __name__ == '__main__':
             val_percent=args.val / 100,
             amp=args.amp,
             use_intensity = args.use_intensity,
-            filter_size = args.intensity_upsample_filter_size
+            filter_size = args.intensity_upsample_filter_size,
+            use_diceloss=args.use_diceloss
         )
     except torch.cuda.OutOfMemoryError:
         logging.error('Detected OutOfMemoryError! '

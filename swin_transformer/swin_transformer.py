@@ -6,7 +6,6 @@ from .uper_head import UPerHead
 import torch.nn.functional as F
 from torchvision import models
 
-
 class CyclicShift(nn.Module):
     def __init__(self, displacement):
         super().__init__()
@@ -311,7 +310,54 @@ class swin_t_upernet_pretrained(nn.Module):
         x = self.uper_head(out)
         # x = x.mean(dim=[2, 3]) 
         return F.interpolate(x, self.size, mode='bilinear')
+    
+class swin_t_upernet_pretrained_rgbi(nn.Module):
+    def __init__(self, channels=4, num_classes=1000, size=[512,512]):
+        super().__init__()
+        self.size = size
+        self.n_classes = num_classes
+        self.n_channels = channels
+        
+        self.swin_v2_t = models.swin_t(models.Swin_T_Weights)
+        self.backbone = list(self.swin_v2_t.children())
+        self.stages = list(self.backbone[0].children())
+        # self.in_conv = self.stages[0]
+        self.in_conv = nn.Conv2d(4, 96, kernel_size=(4, 4), stride=(4, 4))
+        self.layer_norm = nn.LayerNorm(96)
+        self.stage1 = self.stages[1]
+        self.patchmerge1 = self.stages[2]
+        self.stage2 = self.stages[3]
+        self.patchmerge2 = self.stages[4]
+        self.stage3 = self.stages[5]
+        self.patchmerge3 = self.stages[6]
+        self.stage4 = self.stages[7]
 
+        self.uper_head = UPerHead(num_classes=num_classes)
+        
+    def forward(self, img):
+        out = []
+        x = self.in_conv(img)
+        x = torch.permute(x, [0, 2, 3, 1])
+        x = self.layer_norm(x)
+        
+        x = self.stage1(x)
+        out.append(x.permute(0, 3, 1, 2))
+        x = self.patchmerge1(x)
+        
+        x = self.stage2(x)
+        out.append(x.permute(0, 3, 1, 2))
+        x = self.patchmerge2(x)
+        
+        x = self.stage3(x)
+        out.append(x.permute(0, 3, 1, 2))
+        x = self.patchmerge3(x)
+        
+        x = self.stage4(x)
+        out.append(x.permute(0, 3, 1, 2))
+        
+        x = self.uper_head(out)
+        # x = x.mean(dim=[2, 3]) 
+        return F.interpolate(x, self.size, mode='bilinear')
 class swinv2_t_upernet_pretrained(nn.Module):
     def __init__(self, num_classes=1000, size=[512,512]):
         super().__init__()

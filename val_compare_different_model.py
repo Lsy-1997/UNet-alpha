@@ -5,7 +5,7 @@ import os
 import numpy as np
 import torch
 import torch.nn.functional as F
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from torchvision import transforms
 
 from utils.data_loading import BasicDataset
@@ -166,6 +166,34 @@ def brightness_adjust(img, factor):
     
     return brightened_image
 
+def add_serial_num(original_image, number):
+
+    original_width, original_height = original_image.size
+
+    padding_height = 80  # 设定 padding 的高度
+
+    # 创建一个新的图像，高度等于原始图像高度加上 padding 高度
+    new_image = Image.new("RGB", (original_width, original_height + padding_height), color="white")
+
+    # 将原始图像复制到新图像上，位于 padding 下方
+    new_image.paste(original_image, (0, padding_height))
+
+    # 添加文本
+    draw = ImageDraw.Draw(new_image)
+    font_size = 80  # 字体大小
+    font = ImageFont.truetype(font='/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',size=font_size)  # 选择合适的字体和大小
+
+    # 计算文本居中的位置
+    text_width, text_height = font_size, font_size
+    text_x = (original_width - text_width) // 2
+    text_y = (padding_height - text_height) // 2
+
+    # 在 padding 区域绘制编号
+    
+    draw.text((text_x, text_y), str(number), fill="black", font=font)
+
+    return new_image
+
 
 if __name__ == '__main__':
     args = get_args()
@@ -182,7 +210,7 @@ if __name__ == '__main__':
     n_classes = args.classes
         
     # out_dir = args.output
-    factor = 1  # 增加或减少的亮度值
+    factor = 100  # 增加或减少的亮度值
     out_dir = f"/home/cvrsg/lsy/Parking_line_detection/UNet-alpha/test/UNet_a0.5_RGBI_swin_t_compare_brightness_adjust/{factor}"
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
@@ -236,20 +264,22 @@ if __name__ == '__main__':
         label_np = cv2.resize(label_np, (1024, 1024), interpolation=cv2.INTER_NEAREST)
         
         img_rgb = img_np[:,:,0:3]
+        img_rgb_ori = img_rgb
         img_intensity = img_np[:,:,3]
         img_intensity = img_intensity[..., None]
         
-        # factor = 50  # 增加或减少的亮度值
-        factor_array = np.full_like(img_rgb, factor, dtype=np.float32)
+        # factor_array = np.full_like(img_rgb, factor, dtype=np.float32)
+        factor_array = np.full_like(img_rgb, factor, dtype=np.uint8)
         img_rgb = np.array(img_rgb, dtype=np.float32)
         # img_rgb = cv2.add(img_rgb, factor_array)
-        img_rgb = cv2.multiply(img_rgb, factor_array)
+        # img_rgb = cv2.multiply(img_rgb, factor_array)
         img_rgb = np.array(img_rgb, dtype=np.uint8)
-        # img_rgb = cv2.subtract(img_rgb, factor_array)
+        img_rgb = cv2.subtract(img_rgb, factor_array)
         
         img_rgbi = np.concatenate((img_rgb, img_intensity),axis=2)
         
         img_rgb = Image.fromarray(img_rgb)
+        img_rgb_ori = Image.fromarray(img_rgb_ori)
         img_rgbi = Image.fromarray(img_rgbi)
 
         masks = []
@@ -283,11 +313,19 @@ if __name__ == '__main__':
             max_height = max(max_height, result_overlap.height)
             
         # 创建一个新图像
-        new_im = Image.new('RGB', (total_width, max_height))
+        new_im = Image.new('RGB', (total_width, max_height + 20)) # padding 20
 
         # 水平拼接图像
         x_offset = 0
-        for im in [img_rgb, *results_overlap, groundtruth_overlap]:
+        # white_space = np.array(255, (10,max_height))
+        # total_width = total_width + white_space
+        final_imgs_list = [img_rgb_ori, *results_overlap, groundtruth_overlap]
+        for i in range(len(final_imgs_list)):
+            img = final_imgs_list[i]
+            img = add_serial_num(img, i)
+            final_imgs_list[i] = img
+        
+        for im in final_imgs_list:
             new_im.paste(im, (x_offset, 0))
             x_offset += im.width
 
