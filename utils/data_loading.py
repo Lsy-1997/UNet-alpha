@@ -204,8 +204,11 @@ class TongjiParkingDataset(BasicDataset):
         w, h = img.shape[0:2]
         newW, newH = int(scale * w), int(scale * h)
         assert newW > 0 and newH > 0, 'Scale is too small, resized images would have no pixel'
-        img = cv2.resize(img, (int(w * scale), int(h * scale)))
-        
+        if not is_mask:
+            img = cv2.resize(img, (int(w * scale), int(h * scale)))
+        else:
+            img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_NEAREST)
+            
         if is_mask:
             mask = np.zeros((newH, newW), dtype=np.int64)
             for i, v in enumerate(mask_values):

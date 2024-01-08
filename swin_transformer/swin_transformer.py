@@ -266,50 +266,92 @@ class swin_t_upernet(nn.Module):
         out.append(x)
         x = self.uper_head(out)
         # x = x.mean(dim=[2, 3]) 
-        return F.interpolate(x, self.size)
-    
-class swin_t_upernet1(nn.Module):
-    def __init__(self, *, hidden_dim, layers, heads, channels=3, num_classes=1000, head_dim=32, window_size=7,
-                 downscaling_factors=(4, 2, 2, 2), relative_pos_embedding=True, size=[512,512], pretrained=False):
+        return F.interpolate(x, self.size, mode='bilinear')
+
+class swin_t_upernet_pretrained(nn.Module):
+    def __init__(self, channels=3, num_classes=1000, size=[512,512]):
         super().__init__()
-        self.n_channels = channels
         self.size = size
-        self.pretrained = pretrained
-        if(self.pretrained):
-            self.backbone = models.swin_v2_t(weights=models.Swin_V2_T_Weights)
+        self.n_classes = num_classes
+        self.n_channels = channels
+        
+        self.swin_v2_t = models.swin_t(models.Swin_T_Weights)
+        self.backbone = list(self.swin_v2_t.children())
+        self.stages = list(self.backbone[0].children())
+        self.in_conv = self.stages[0]
+        self.stage1 = self.stages[1]
+        self.patchmerge1 = self.stages[2]
+        self.stage2 = self.stages[3]
+        self.patchmerge2 = self.stages[4]
+        self.stage3 = self.stages[5]
+        self.patchmerge3 = self.stages[6]
+        self.stage4 = self.stages[7]
 
-        self.stage1 = StageModule(in_channels=channels, hidden_dimension=hidden_dim, layers=layers[0],
-                                  downscaling_factor=downscaling_factors[0], num_heads=heads[0], head_dim=head_dim,
-                                  window_size=window_size, relative_pos_embedding=relative_pos_embedding)
-        self.stage2 = StageModule(in_channels=hidden_dim, hidden_dimension=hidden_dim * 2, layers=layers[1],
-                                  downscaling_factor=downscaling_factors[1], num_heads=heads[1], head_dim=head_dim,
-                                  window_size=window_size, relative_pos_embedding=relative_pos_embedding)
-        self.stage3 = StageModule(in_channels=hidden_dim * 2, hidden_dimension=hidden_dim * 4, layers=layers[2],
-                                  downscaling_factor=downscaling_factors[2], num_heads=heads[2], head_dim=head_dim,
-                                  window_size=window_size, relative_pos_embedding=relative_pos_embedding)
-        self.stage4 = StageModule(in_channels=hidden_dim * 4, hidden_dimension=hidden_dim * 8, layers=layers[3],
-                                  downscaling_factor=downscaling_factors[3], num_heads=heads[3], head_dim=head_dim,
-                                  window_size=window_size, relative_pos_embedding=relative_pos_embedding)
-
-        self.mlp_head = nn.Sequential(
-            nn.LayerNorm(hidden_dim * 8),
-            nn.Linear(hidden_dim * 8, num_classes)
-        )
         self.uper_head = UPerHead(num_classes=num_classes)
         
     def forward(self, img):
         out = []
-        x = self.stage1(img)
-        out.append(x)
+        x = self.in_conv(img)
+        
+        x = self.stage1(x)
+        out.append(x.permute(0, 3, 1, 2))
+        x = self.patchmerge1(x)
+        
         x = self.stage2(x)
-        out.append(x)
+        out.append(x.permute(0, 3, 1, 2))
+        x = self.patchmerge2(x)
+        
         x = self.stage3(x)
-        out.append(x)
+        out.append(x.permute(0, 3, 1, 2))
+        x = self.patchmerge3(x)
+        
         x = self.stage4(x)
-        out.append(x)
+        out.append(x.permute(0, 3, 1, 2))
+        
         x = self.uper_head(out)
         # x = x.mean(dim=[2, 3]) 
-        return F.interpolate(x, self.size)
+        return F.interpolate(x, self.size, mode='bilinear')
+
+class swinv2_t_upernet_pretrained(nn.Module):
+    def __init__(self, num_classes=1000, size=[512,512]):
+        super().__init__()
+        self.size = size
+        self.swin_v2_t = models.swin_v2_t(models.Swin_V2_T_Weights)
+        self.backbone = list(self.swin_v2_t.children())
+        self.stages = list(self.backbone[0].children())
+        self.in_conv = self.stages[0]
+        self.stage1 = self.stages[1]
+        self.patchmerge1 = self.stages[2]
+        self.stage2 = self.stages[3]
+        self.patchmerge2 = self.stages[4]
+        self.stage3 = self.stages[5]
+        self.patchmerge3 = self.stages[6]
+        self.stage4 = self.stages[7]
+
+        self.uper_head = UPerHead(num_classes=num_classes)
+        
+    def forward(self, img):
+        out = []
+        x = self.in_conv(img)
+        
+        x = self.stage1(x)
+        out.append(x)
+        x = self.patchmerge1(x)
+        
+        x = self.stage2(x)
+        out.append(x)
+        x = self.patchmerge2(x)
+        
+        x = self.stage3(x)
+        out.append(x)
+        x = self.patchmerge3(x)
+        
+        x = self.stage4(x)
+        out.append(x)
+        
+        x = self.uper_head(out)
+        # x = x.mean(dim=[2, 3]) 
+        return F.interpolate(x, self.size, mode='bilinear')
 
 def swin_t(hidden_dim=96, layers=(2, 2, 6, 2), heads=(3, 6, 12, 24), **kwargs):
     return SwinTransformer(hidden_dim=hidden_dim, layers=layers, heads=heads, **kwargs)

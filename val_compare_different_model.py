@@ -10,6 +10,7 @@ from torchvision import transforms
 
 from utils.data_loading import BasicDataset
 from unet import UNet, UNet3, UNet_alpha
+from swin_transformer import SwinTransformer, swin_t_upernet, swin_t_upernet_pretrained
 from utils.utils import plot_img_and_mask
 from tqdm import tqdm
 
@@ -62,7 +63,9 @@ def preprocess(mask_values, pil_img, scale, is_mask, square_pad=False, use_inten
             return mask
 
         else:
-            if use_intensity==1:
+            if use_intensity==0:
+                img = img[:,:,0:3]
+            elif use_intensity==1:
                 rgb = img[:,:,0:3]
                 intensity = img[:,:,3]
                 filtered_intensity = maximum_filter(intensity, size=filter_size)
@@ -89,7 +92,10 @@ def predict_img(net,
                 scale_factor=1,
                 out_threshold=0.5):
     net.eval()
-    img = torch.from_numpy(preprocess(None, full_img, scale_factor, is_mask=False))
+    if(net.n_channels==3):
+        img = torch.from_numpy(preprocess(None, full_img, scale_factor, is_mask=False, use_intensity=0))
+    elif (net.n_channels==4):
+        img = torch.from_numpy(preprocess(None, full_img, scale_factor, is_mask=False, use_intensity=1))
     img = img.unsqueeze(0)
     img = img.to(device=device, dtype=torch.float32)
 
@@ -176,8 +182,8 @@ if __name__ == '__main__':
     n_classes = args.classes
         
     # out_dir = args.output
-    factor = 0.8  # 增加或减少的亮度值
-    out_dir = f"/home/cvrsg/lsy/Parking_line_detection/UNet-alpha/test/UNet_a0.5_RGBI_compare_brightness_adjust/{factor}"
+    factor = 1  # 增加或减少的亮度值
+    out_dir = f"/home/cvrsg/lsy/Parking_line_detection/UNet-alpha/test/UNet_a0.5_RGBI_swin_t_compare_brightness_adjust/{factor}"
     if not os.path.exists(out_dir):
         os.makedirs(out_dir)
         
@@ -186,33 +192,36 @@ if __name__ == '__main__':
     labels_dir = '/home/cvrsg/lsy/Parking_line_detection/UNet-alpha/data/tongji_parking_rgbi_slice_splitted_truergbi/labels/val'
     labels_path = get_output_filenames(labels_dir, in_files)
     
-    model_path1 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity0_fs1_2024-01-04/checkpoint_epoch200.pth'
-    model_path2 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs1_2024-01-04/checkpoint_epoch200.pth'
-    model_path3 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs5_2024-01-04/checkpoint_epoch200.pth'
-    model_path4 = 'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs15_2024-01-04/checkpoint_epoch200.pth'
+    models_list = [
+                    'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity0_fs1_2024-01-04/checkpoint_epoch200.pth',
+                    'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs1_2024-01-04/checkpoint_epoch200.pth',
+                    'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs5_2024-01-04/checkpoint_epoch200.pth',
+                    'checkpoints/UNet_alpha0.5_tongji_parking_rgbi_slice_splitted_truergbi_useintensity1_fs15_2024-01-04/checkpoint_epoch200.pth',
+                    'checkpoints/SwinTransformer_pretrained_tongji_parking_rgbi_slice_splitted_truergbi2024-01-07/checkpoint_epoch200.pth'
+    ]
 
-    net1 = UNet_alpha(n_channels=3, n_classes=n_classes, bilinear=False, alpha=0.5)
-    net2 = UNet_alpha(n_channels=4, n_classes=n_classes, bilinear=False, alpha=0.5)
-    net3 = UNet_alpha(n_channels=4, n_classes=n_classes, bilinear=False, alpha=0.5)
-    net4 = UNet_alpha(n_channels=4, n_classes=n_classes, bilinear=False, alpha=0.5)
+    nets = []
+    nets.append(UNet_alpha(n_channels=3, n_classes=n_classes, bilinear=False, alpha=0.5))
+    nets.append(UNet_alpha(n_channels=4, n_classes=n_classes, bilinear=False, alpha=0.5))
+    nets.append(UNet_alpha(n_channels=4, n_classes=n_classes, bilinear=False, alpha=0.5))
+    nets.append(UNet_alpha(n_channels=4, n_classes=n_classes, bilinear=False, alpha=0.5))
+    nets.append(swin_t_upernet_pretrained(num_classes=args.classes))
     
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     logging.info(f'Loading model {args.model}')
     logging.info(f'Using device {device}')
 
-    net1.to(device=device)
-    net2.to(device=device)
-    net3.to(device=device)
-    net4.to(device=device)
-    state_dict1 = torch.load(model_path1, map_location=device)
-    state_dict2 = torch.load(model_path2, map_location=device)
-    state_dict3 = torch.load(model_path3, map_location=device)
-    state_dict4 = torch.load(model_path4, map_location=device)
+    for net in nets:
+        net.to(device=device)
+
+    state_dicts = []
+    for model_path in models_list:
+        state_dicts.append(torch.load(model_path, map_location=device))
+        
     mask_values = [0, 1, 2, 3, 4, 5]
-    net1.load_state_dict(state_dict1)
-    net2.load_state_dict(state_dict2)
-    net3.load_state_dict(state_dict3)
-    net4.load_state_dict(state_dict4)
+    
+    for i in range(len(nets)):
+        nets[i].load_state_dict(state_dicts[i])
     
     logging.info('Model loaded!')
 
@@ -222,10 +231,9 @@ if __name__ == '__main__':
         
         img_np = np.asarray(img)
         
-        
         label_np = np.asarray(label)
         img_np = cv2.resize(img_np, (1024, 1024))
-        label_np = cv2.resize(label_np, (1024, 1024))
+        label_np = cv2.resize(label_np, (1024, 1024), interpolation=cv2.INTER_NEAREST)
         
         img_rgb = img_np[:,:,0:3]
         img_intensity = img_np[:,:,3]
@@ -244,45 +252,46 @@ if __name__ == '__main__':
         img_rgb = Image.fromarray(img_rgb)
         img_rgbi = Image.fromarray(img_rgbi)
 
-        mask1 = predict_img(net=net1, full_img=img_rgb, scale_factor=args.scale, out_threshold=args.mask_threshold, device=device)
-        mask2 = predict_img(net=net2, full_img=img_rgbi, scale_factor=args.scale, out_threshold=args.mask_threshold, device=device)
-        mask3 = predict_img(net=net3, full_img=img_rgbi, scale_factor=args.scale, out_threshold=args.mask_threshold, device=device)
-        mask4 = predict_img(net=net4, full_img=img_rgbi, scale_factor=args.scale, out_threshold=args.mask_threshold, device=device)
+        masks = []
+        for net in nets:
+            masks.append(predict_img(net=net, full_img=img_rgbi, scale_factor=args.scale, out_threshold=args.mask_threshold, device=device))
 
-        if not args.no_save:
-            out_filename = out_files_path[i]
-            result1 = mask_to_image(mask1, mask_values)
-            result2 = mask_to_image(mask2, mask_values)
-            result3 = mask_to_image(mask3, mask_values)
-            result4 = mask_to_image(mask4, mask_values)
+
+        out_filename = out_files_path[i]
+        results = []
+        for mask in masks:
+            results.append(mask_to_image(mask, mask_values))
+        
+        label = mask_to_image(label_np, mask_values)
+        
+        results_overlap = []
+        for result in results:
+            results_overlap.append(plot_mask(img=img_rgb, masks=result, colors=tongji_parking_rgbi,alpha=1.0))
             
-            label = mask_to_image(label_np, mask_values)
-
-            result_overlap1 = plot_mask(img=img_rgb, masks=result1, colors=tongji_parking_rgbi,alpha=1.0)
-            result_overlap2 = plot_mask(img=img_rgb, masks=result2, colors=tongji_parking_rgbi,alpha=1.0)
-            result_overlap3 = plot_mask(img=img_rgb, masks=result3, colors=tongji_parking_rgbi,alpha=1.0)
-            result_overlap4 = plot_mask(img=img_rgb, masks=result4, colors=tongji_parking_rgbi,alpha=1.0)
+        groundtruth_overlap = plot_mask(img=img_rgb, masks=label, colors=tongji_parking_rgbi,alpha=1.0)
+        
+        # drawed_mask1 = draw_mask(mask=mask1, palette=tongji_parking_rgbi)
+        # drawed_mask2 = draw_mask(mask=mask2, palette=tongji_parking_rgbi)
+        # drawed_mask3 = draw_mask(mask=mask3, palette=tongji_parking_rgbi)
+        # drawed_mask4 = draw_mask(mask=mask4, palette=tongji_parking_rgbi)
+        
+        total_width = img_rgb.width + groundtruth_overlap.width
+        
+        max_height = max(img_rgb.height, groundtruth_overlap.height)
+        for result_overlap in results_overlap:
+            total_width = total_width + result_overlap.width
+            max_height = max(max_height, result_overlap.height)
             
-            groundtruth_overlap = plot_mask(img=img_rgb, masks=label, colors=tongji_parking_rgbi,alpha=1.0)
-            
-            # drawed_mask1 = draw_mask(mask=mask1, palette=tongji_parking_rgbi)
-            # drawed_mask2 = draw_mask(mask=mask2, palette=tongji_parking_rgbi)
-            # drawed_mask3 = draw_mask(mask=mask3, palette=tongji_parking_rgbi)
-            # drawed_mask4 = draw_mask(mask=mask4, palette=tongji_parking_rgbi)
-            
-            total_width = img_rgb.width + result_overlap1.width + result_overlap2.width + result_overlap3.width + result_overlap4.width + groundtruth_overlap.width
-            max_height = max(result_overlap1.height, result_overlap2.height, result_overlap3.height, result_overlap4.height, groundtruth_overlap.height)
+        # 创建一个新图像
+        new_im = Image.new('RGB', (total_width, max_height))
 
-            # 创建一个新图像
-            new_im = Image.new('RGB', (total_width, max_height))
+        # 水平拼接图像
+        x_offset = 0
+        for im in [img_rgb, *results_overlap, groundtruth_overlap]:
+            new_im.paste(im, (x_offset, 0))
+            x_offset += im.width
 
-            # 水平拼接图像
-            x_offset = 0
-            for im in [img_rgb, result_overlap1, result_overlap2, result_overlap3, result_overlap4, groundtruth_overlap]:
-                new_im.paste(im, (x_offset, 0))
-                x_offset += im.width
-
-            # 保存或显示拼接后的图像
-            new_im.save(out_filename)
+        # 保存或显示拼接后的图像
+        new_im.save(out_filename)
 
 

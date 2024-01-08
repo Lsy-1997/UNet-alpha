@@ -26,7 +26,7 @@ from unet import UNet, UNet3, UNet_alpha
 from utils.data_loading import BasicDataset, CarvanaDataset, TongjiParkingDataset
 from utils.dice_score import dice_loss
 
-from swin_transformer import SwinTransformer, swin_t_upernet
+from swin_transformer import SwinTransformer, swin_t_upernet, swin_t_upernet_pretrained
 
 from fcn import FCN_resnet50
 # from models.ffnet_S_mobile import segmentation_ffnet86S_dBBB_mobile_lsy
@@ -116,10 +116,12 @@ def train_model(
     ''')
 
     # 4. Set up the optimizer, the loss, the learning rate scheduler and the loss scaling for AMP
-    optimizer = optim.RMSprop(model.parameters(), lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
-    # optimizer = optim.Adam(model.parameters(), lr=0.00006)
+    # optimizer = optim.RMSprop(model.parameters(), lr=learning_rate, weight_decay=weight_decay, momentum=momentum, foreach=True)
+    optimizer = optim.AdamW(model.parameters(), lr=learning_rate, capturable=True)
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'max', patience=20)  # goal: maximize Dice score
     scheduler = optim.lr_scheduler.LinearLR(optimizer, learning_rate)  # goal: maximize Dice score
+    # scheduler = optim.lr_scheduler.PolynomialLR(optimizer, learning_rate)  # goal: maximize Dice score
+    # scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=30, gamma=0.1)
     grad_scaler = torch.cuda.amp.GradScaler(enabled=amp)
     criterion = nn.CrossEntropyLoss() if model.n_classes > 1 else nn.BCEWithLogitsLoss()
     global_step = 0
@@ -154,10 +156,12 @@ def train_model(
                         )
 
                 optimizer.zero_grad(set_to_none=True)
-                grad_scaler.scale(loss).backward()
+                # grad_scaler.scale(loss).backward()
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clipping)
-                grad_scaler.step(optimizer)
-                grad_scaler.update()
+                # grad_scaler.step(optimizer)
+                optimizer.step()
+                # grad_scaler.update()
 
                 pbar.update(images.shape[0])
                 global_step += 1
@@ -319,6 +323,10 @@ if __name__ == '__main__':
                                     relative_pos_embedding=True,
                                     size=[512, 512]
                                 )
+    elif args.model == 'SwinTransformer_pretrained':
+        model = swin_t_upernet_pretrained(num_classes=args.classes)
+    elif args.model == 'resnet':
+        model = models.resnet50(models.ResNet50_Weights)
         
     model = model.to(memory_format=torch.channels_last)
 
@@ -328,7 +336,8 @@ if __name__ == '__main__':
 
     if args.load:
         state_dict = torch.load(args.load, map_location=device)
-        del state_dict['mask_values']
+        if 'mask_values' in state_dict:
+            del state_dict['mask_values']
         model.load_state_dict(state_dict)
         logging.info(f'Model loaded from {args.load}')
 
